@@ -1,0 +1,614 @@
+create table src.kdz_40_flights ( "year" int not null,
+"quarter" int null,
+"month" int not null,
+fl_date varchar(30) not null,
+op_unique_carrier varchar(10) null,
+tail_num varchar(10) null,
+op_carrier_fl_num varchar(15) not null,
+origin varchar(10) null,
+dest varchar(10) null,
+crs_dep_time time not null,
+dep_time time null,
+dep_delay_new float null,
+cancelled float not null,
+cancellation_code char(1) null,
+air_time float null,
+distance float null,
+weather_delay float null,
+loaded_ts timestamp default (now()) 
+);
+
+create table src.kdz_40_weather ( 
+local_time varchar(25) NOT NULL,
+T numeric(3, 1)  NULL,
+P0 numeric(4, 1) NOT NULL,
+P numeric(4, 1) NOT NULL,
+U int NOT NULL,
+DD varchar(100) NULL,
+Ff varchar(10) NULL,
+ff10 varchar(10) NULL,
+WW varchar(100) NULL,
+"W'W'" varchar(50) NULL,
+c varchar(200) NULL,
+VV numeric(3, 1) NOT NULL,
+Td numeric(3, 1) NOT NULL,
+icao_code varchar(10) null,
+loaded_ts timestamp NOT NULL DEFAULT now() 
+);
+
+КОД ДЛЯ КОПИРОВАНИЯ В ТЕРМИНАЛ
+
+\COPY src.kdz_40_weather(local_time, t, p0, p, u, dd, ff, ff10, ww, "W'W'", c, vv, td, icao_code) FROM '/Users/novikovivan/Desktop/папка для папок/КДЗ DLH NEW/KDLH.01.05.2021.01.09.2021.1.0.0.en.utf8.00000000.csv' WITH DELIMITER ';' CSV HEADER encoding 'UTF8';
+
+\copy src.kdz_40_flights(year, quarter, month, fl_date, op_unique_carrier, tail_num, op_carrier_fl_num, origin, dest, crs_dep_time, dep_time, dep_delay_new, cancelled, cancellation_code, air_time, distance, weather_delay) from '/Users/novikovivan/Desktop/папка для папок/КДЗ DLH NEW/T_ONTIME_REPORTING-4.csv' with delimiter ',' CSV HEADER;
+
+create table if not exists staging.kdz_40_weather(
+local_datetime varchar(25) NOT NULL,
+t_air_temperature numeric(3, 1) NOT NULL,
+p0_sea_lvl numeric(4, 1) NOT NULL,
+p_station_lvl numeric(4, 1) NOT NULL,
+u_humidity int4 NOT NULL,
+dd_wind_direction varchar(100) NULL,
+ff_wind_speed int4 NULL,
+ff10_max_gust_value int4 NULL,
+ww_present varchar(100) NULL,
+ww_recent varchar(50) NULL,
+c_total_clouds varchar(200) not NULL,
+vv_horizontal_visibility numeric(3, 1) NOT NULL,
+td_temperature_dewpoint numeric(3, 1) NOT NULL,
+loaded_ts timestamp NOT NULL DEFAULT now(),
+icao_code varchar(10) not null,
+PRIMARY KEY (icao_code, local_datetime)
+);
+
+CREATE TABLE etl.kdz_40_weather as SELECT DISTINCT
+local_time AS local_datetime,
+t AS t_air_temperature,
+p0 AS p0_sea_lvl,
+p AS p_station_lvl,
+u AS u_humidity,
+dd AS dd_wind_direction,
+ff AS ff_wind_speed,
+ff10 AS ff10_max_gust_value,
+ww AS ww_present,
+"W'W'" AS ww_recent,
+c AS c_total_clouds,
+vv AS vv_horizontal_visibility,
+td AS td_temperature_dewpoint,
+'KDLH' AS icao_code FROM src.kdz_40_weather;
+
+INSERT INTO staging.kdz_40_weather (
+local_datetime, 
+t_air_temperature,
+p0_sea_lvl,
+p_station_lvl,
+u_humidity,
+dd_wind_direction,
+ff_wind_speed,
+ff10_max_gust_value,
+ww_present,
+ww_recent,
+c_total_clouds,
+vv_horizontal_visibility,
+td_temperature_dewpoint,
+icao_code
+)
+SELECT DISTINCT 
+local_datetime, 
+t_air_temperature,
+p0_sea_lvl,
+p_station_lvl,
+u_humidity,
+dd_wind_direction,
+CAST(COALESCE(NULLIF(ff_wind_speed, ''), '0') AS int), 
+CAST(COALESCE(NULLIF(ff10_max_gust_value, ''), '0') AS int), 
+ww_present,
+ww_recent,
+c_total_clouds,
+vv_horizontal_visibility,
+td_temperature_dewpoint,
+icao_code
+FROM
+etl.kdz_40_weather
+ON CONFLICT (icao_code, local_datetime) DO UPDATE
+SET
+t_air_temperature = excluded.t_air_temperature, 
+p0_sea_lvl = excluded.p0_sea_lvl, 
+p_station_lvl = excluded.p_station_lvl, 
+u_humidity = excluded.u_humidity,
+dd_wind_direction = excluded.dd_wind_direction,
+ff_wind_speed = excluded.ff_wind_speed,
+ff10_max_gust_value = excluded.ff10_max_gust_value,
+ww_present = excluded.ww_present,
+ww_recent = excluded.ww_recent,
+c_total_clouds = excluded.c_total_clouds,
+vv_horizontal_visibility = excluded.vv_horizontal_visibility,
+td_temperature_dewpoint = excluded.td_temperature_dewpoint,
+loaded_ts = now();
+
+
+create table if not exists staging.kdz_40_flights(
+"year" int NOT NULL,
+"quarter" int NULL,
+"month" int NOT NULL,
+flight_date date NOT NULL,
+dep_time time NULL,
+crs_dep_time time NOT NULL,
+air_time float NULL,
+dep_delay_minutes float NULL,
+cancelled int NOT NULL,
+cancellation_code char(1) NULL,
+weather_delay float NULL,
+reporting_airline varchar(10) NULL,
+tail_number varchar(10) NULL,
+flight_number varchar(15) NOT NULL,
+distance float NULL,
+origin varchar(10) NULL,
+dest varchar(10) NULL,
+loaded_ts timestamp default(now()),
+CONSTRAINT flights_pkey_40 PRIMARY KEY (flight_date, flight_number, origin, dest, crs_dep_time)
+);
+
+create table etl.kdz_40_flights as select distinct
+"year",
+"quarter",
+"month",
+fl_date as flight_date,
+op_unique_carrier as reporting_airline,
+tail_num as tail_number,
+op_carrier_fl_num as flight_number,
+origin,
+dest,
+crs_dep_time,
+dep_time,
+dep_delay_new as dep_delay_minutes,
+cancelled,
+cancellation_code,
+air_time,
+distance,
+weather_delay from src.kdz_40_flights where origin = 'DLH';
+
+
+INSERT INTO staging.kdz_40_flights("year", 
+"quarter", 
+"month", 
+flight_date, 
+reporting_airline, 
+tail_number, 
+flight_number, 
+origin, 
+dest, 
+crs_dep_time, 
+dep_time, 
+dep_delay_minutes, 
+cancelled, 
+cancellation_code, 
+air_time, 
+distance, 
+weather_delay) SELECT DISTINCT
+"year",
+"quarter",
+"month",
+TO_DATE(flight_date, 'MM/DD/YYYY'), 
+reporting_airline,
+tail_number,
+flight_number,
+origin,
+dest,
+crs_dep_time,
+dep_time,
+dep_delay_minutes,
+cancelled,
+cancellation_code,
+air_time,
+distance,
+weather_delay
+FROM etl.kdz_40_flights
+ON CONFLICT(flight_date, flight_number, origin, dest, crs_dep_time) DO update
+SET
+"year" = excluded."year",
+"quarter" = excluded."quarter",
+"month" = excluded."month",
+flight_date = excluded.flight_date,
+reporting_airline = excluded.reporting_airline,
+tail_number = excluded.tail_number,
+dep_time = excluded.dep_time,
+dep_delay_minutes = excluded.dep_delay_minutes,
+cancelled = excluded.cancelled,
+cancellation_code = excluded.cancellation_code,
+air_time = excluded.air_time,
+distance = excluded.distance,
+weather_delay = excluded.weather_delay,
+loaded_ts = now();
+
+2 часть
+
+CREATE TABLE dwh.kdz_40_weather (
+icao_code varchar(10) NOT NULL,
+local_datetime varchar(25) NOT NULL,
+dwh_id int8 NOT NULL GENERATED ALWAYS AS IDENTITY,
+loaded_ts timestamptz NOT NULL DEFAULT now(),
+system_n varchar(50) NOT NULL,
+CONSTRAINT kdz_40_weather_id_pkey PRIMARY KEY (dwh_id)
+);
+
+INSERT INTO dwh.kdz_40_weather (icao_code, local_datetime, system_n)
+SELECT
+icao_code,
+local_datetime,
+'weather'
+FROM staging.kdz_40_weather;
+
+create table dwh.kdz_40_flights(
+flight_date date NOT null,
+origin varchar(10) null,
+dest varchar(10) null,
+flight_number varchar(15) NOT null,
+crs_dep_time time NOT null,
+dwh_id int8 not null generated always as identity primary key, -- Суррогатный ключ в ХД 
+loaded_ts timestamptz not null default(now()) -- Когда ключ был сгенерирован
+);
+INSERT INTO dwh.kdz_40_flights (flight_date, origin, dest, flight_number, crs_dep_time)
+SELECT
+flight_date, 
+origin, 
+dest, 
+flight_number, 
+crs_dep_time
+FROM staging.kdz_40_flights;
+
+CREATE TABLE dds.kdz_40_airport_weather (
+airport_dk int NOT NULL, -- постоянный ключ аэропорта. нужно взять из таблицы аэропортов
+weather_type_dk char(6) NOT NULL, -- постоянный ключ типа погоды. заполняется по формуле
+cold smallint default(0),
+rain smallint default(0),
+snow smallint default(0),
+thunderstorm smallint default(0),
+drizzle smallint default(0),
+fog_mist smallint default(0),
+t int NULL,
+max_gws int NULL,
+w_speed int NULL,
+date_start timestamp NOT NULL,
+date_end timestamp NOT NULL default('3000-01-01'::timestamp),
+loaded_ts timestamp default(now()),
+PRIMARY KEY (airport_dk, date_start)
+);
+
+
+CREATE TABLE dds.kdz_40_flights (
+year int NULL,
+quarter int NULL,
+month int NULL,
+flight_scheduled_date date NULL,
+flight_actual_date date NULL,
+flight_dep_scheduled_ts timestamp NOT NULL,
+flight_dep_actual_ts timestamp NULL,
+report_airline varchar(10) NOT NULL,
+tail_number varchar(10) NOT NULL,
+flight_number_reporting_airline varchar(15) NOT NULL,
+airport_origin_dk int NULL, --постоянный ключ аэропорта. нужно взять из таблицы аэропортов
+origin_code varchar(5) null,
+airport_dest_dk int NULL,  --постоянный ключ аэропорта. нужно взять из таблицы аэропортов
+dest_code varchar(5) null,
+dep_delay_minutes float NULL,
+cancelled int NOT NULL,
+cancellation_code char(1) NULL,
+weather_delay float NULL,
+air_time float NULL,
+distance float NULL,
+loaded_ts timestamp default(now()),
+CONSTRAINT flights_pk_40 PRIMARY KEY (flight_dep_scheduled_ts, flight_number_reporting_airline, origin_code, dest_code)
+);
+
+
+
+
+
+
+
+create table if not exists etl.kdz_40_dds_weather_loaded( 
+loaded_ts timestamp not null primary key
+);
+
+
+insert into etl.kdz_40_dds_weather_loaded (loaded_ts) 
+values('1970-01-01');
+
+
+drop table etl.kdz_40_pre_dds_airport_weather;
+create table etl.kdz_40_pre_dds_airport_weather as
+select
+airport_dk, 
+concat((case when td_temperature_dewpoint < 0 then 1 else 0 end), 
+(case when lower(ww_present) like '%rain%' or lower(ww_recent) like '%rain%' then 1 else 0 end), 
+(case when lower(ww_present)like '%snow%' or lower(ww_recent) like '%snow%' then 1 else 0 end), 
+(case when lower(ww_present) like '%thunderstorm%' or lower(ww_recent) like '%thunderstorm%' then 1 else 0 end), 
+(case when lower(ww_present) like '%drizzle%' or lower(ww_recent) like '%drizzle%' then 1 else 0 end), 
+(case when lower(ww_present) like '%fog%' or lower(ww_present) like '%mist%' or lower(ww_recent) like '%fog%'
+or lower(ww_recent)like '%mist%' then 1 else 0 end)::smallint) as weather_type_dk, 
+(case when td_temperature_dewpoint < 0 then 1 else 0 end) as cold, 
+(case when lower(ww_present) like '%rain%' or lower(ww_recent) like '%rain%' then 1 else 0 end) as rain, 
+(case when lower(ww_present)like '%snow%' or lower(ww_recent) like '%snow%' then 1 else 0 end) as snow, 
+(case when lower(ww_present) like '%thunderstorm%' or lower(ww_recent) like '%thunderstorm%' then 1 else 0 end) as thunderstorm, 
+(case when lower(ww_present) like '%drizzle%' or lower(ww_recent) like '%drizzle%' then 1 else 0 end) as drizzle, 
+(case when lower(ww_present) like '%fog%' or lower(ww_present) like '%mist%' or lower(ww_recent) like '%fog%'
+or lower(ww_recent)like '%mist%' then 1 else 0 end) as fog_mist, 
+td_temperature_dewpoint as t, 
+ff10_max_gust_value as max_gws, 
+ff_wind_speed as w_speed, 
+local_datetime::timestamp as date_start, 
+coalesce(lead(local_datetime::timestamp) over(partition by kw.icao_code order by local_datetime), '3000-01-01'::timestamp) as date_end, 
+now() as loaded_ts
+from staging.kdz_40_weather kw
+left join dds.airport a
+on a.icao_code = kw.icao_code
+where kw.loaded_ts > (select max(loaded_ts) from etl.kdz_40_dds_weather_loaded);
+
+insert into dds.kdz_40_airport_weather
+(airport_dk, 
+weather_type_dk, 
+cold, 
+rain, 
+snow, 
+thunderstorm, 
+drizzle, 
+fog_mist, 
+t, 
+max_gws, 
+w_speed, 
+date_start, 
+date_end, 
+loaded_ts) 
+select
+airport_dk, 
+weather_type_dk, 
+cold, 
+rain, 
+snow, 
+thunderstorm, 
+drizzle, 
+fog_mist, 
+t, 
+max_gws, 
+w_speed, 
+date_start, 
+date_end, 
+now() as loaded_ts
+from
+etl.kdz_40_pre_dds_airport_weather
+on conflict(airport_dk, date_start) do update
+set
+weather_type_dk = excluded.weather_type_dk, 
+cold = excluded.cold, 
+rain = excluded.rain, 
+snow = excluded.snow, 
+thunderstorm = excluded.thunderstorm, 
+drizzle = excluded.drizzle, 
+fog_mist = excluded.fog_mist, 
+t = excluded.t, 
+max_gws = excluded.max_gws, 
+w_speed = excluded.w_speed, 
+date_start = excluded.date_start, 
+date_end = excluded.date_end, 
+loaded_ts = excluded.loaded_ts;
+
+update etl.kdz_40_dds_weather_loaded
+set loaded_ts = (select max(date_start) from dds.kdz_40_airport_weather);
+
+create table if not exists etl.kdz_40_pre_dds_flights_loaded( 
+loaded_ts timestamp not null primary key
+);
+insert into etl.kdz_40_pre_dds_flights_loaded (loaded_ts) 
+values('1970-01-01');
+
+
+
+
+
+
+CREATE TABLE etl.kdz_40_pre_dds_flights AS SELECT DISTINCT
+"year", 
+quarter, 
+"month", 
+flight_date::date AS flight_scheduled_date, 
+CASE
+WHEN cancellation_code IS NULL THEN (concat(flight_date::date, ' ', EXTRACT(HOUR FROM crs_dep_time)::varchar, ':', EXTRACT(MINUTE FROM crs_dep_time)::varchar)::timestamp + (dep_delay_minutes || ' minutes')::interval)::date
+ELSE NULL
+END AS flight_actual_date, 
+concat(flight_date::date, ' ', EXTRACT(HOUR FROM crs_dep_time)::varchar, ':', EXTRACT(MINUTE FROM crs_dep_time)::varchar)::timestamp AS flight_dep_scheduled_ts, 
+CASE
+WHEN cancellation_code IS NULL THEN (concat(flight_date::date, ' ', EXTRACT(HOUR FROM crs_dep_time)::varchar, ':', EXTRACT(MINUTE FROM crs_dep_time)::varchar)::timestamp + (dep_delay_minutes || ' minutes')::interval)::timestamp
+ELSE NULL
+END AS flight_dep_actual_ts, 
+reporting_airline AS report_airline, 
+tail_number, 
+flight_number AS flight_number_reporting_airline, 
+a1.airport_dk AS airport_origin_dk, 
+origin AS origin_code, 
+a2.airport_dk AS airport_dest_dk, 
+dest AS dest_code, 
+dep_delay_minutes, 
+cancelled, 
+cancellation_code, 
+weather_delay, 
+air_time, 
+distance
+FROM
+staging.kdz_40_flights kf
+LEFT JOIN dds.airport a1 ON a1.iata_code = kf.origin
+LEFT JOIN dds.airport a2 ON a2.iata_code = kf.dest
+WHERE kf.loaded_ts > (SELECT MAX(loaded_ts) FROM etl.kdz_40_pre_dds_flights_loaded) AND tail_number IS NOT NULL;
+
+
+insert into dds.kdz_40_flights
+("year", 
+quarter, 
+"month", 
+flight_scheduled_date, 
+flight_actual_date, 
+flight_dep_scheduled_ts, 
+flight_dep_actual_ts, 
+report_airline, 
+tail_number, 
+flight_number_reporting_airline, 
+airport_origin_dk, 
+origin_code, 
+airport_dest_dk, 
+dest_code, 
+dep_delay_minutes, 
+cancelled, 
+cancellation_code, 
+weather_delay, 
+air_time, 
+distance, 
+loaded_ts) 
+select
+"year", 
+quarter, 
+"month", 
+flight_scheduled_date, 
+flight_actual_date, 
+flight_dep_scheduled_ts, 
+flight_dep_actual_ts, 
+report_airline, 
+tail_number, 
+flight_number_reporting_airline, 
+airport_origin_dk, 
+origin_code, 
+airport_dest_dk, 
+dest_code, 
+dep_delay_minutes, 
+cancelled, 
+cancellation_code, 
+weather_delay, 
+air_time, 
+distance, 
+now() as loaded_ts
+from etl.kdz_40_pre_dds_flights
+on conflict(flight_dep_scheduled_ts, flight_number_reporting_airline, origin_code, dest_code) do update
+set
+"year" = excluded."year", 
+quarter = excluded.quarter, 
+"month" = excluded."month", 
+flight_scheduled_date = excluded.flight_scheduled_date, 
+flight_actual_date = excluded.flight_actual_date, 
+flight_dep_actual_ts = excluded.flight_dep_actual_ts, 
+report_airline = excluded.report_airline, 
+tail_number = excluded.tail_number, 
+airport_origin_dk = excluded.airport_origin_dk, 
+airport_dest_dk = excluded.airport_dest_dk, 
+dep_delay_minutes = excluded.dep_delay_minutes, 
+cancelled = excluded.cancelled, 
+cancellation_code = excluded.cancellation_code, 
+weather_delay = excluded.weather_delay, 
+air_time = excluded.air_time, 
+distance = excluded.distance, 
+loaded_ts = excluded.loaded_ts;
+
+update etl.kdz_40_pre_dds_flights_loaded
+set loaded_ts = (select max(loaded_ts) from dds.kdz_40_flights);
+
+create table if not exists etl.kdz_40_pre_mart_flights_loaded( 
+loaded_ts timestamp not null primary key
+);
+
+
+insert into etl.kdz_40_pre_mart_flights_loaded (loaded_ts) 
+values('1970-01-01');
+
+CREATE TABLE etl.kdz_40_pre_mart_flights AS
+SELECT
+f.airport_origin_dk,
+f.airport_dest_dk AS airport_destination_dk,
+w.weather_type_dk,
+f.flight_dep_scheduled_ts AS flight_scheduled_ts,
+f.flight_dep_actual_ts AS flight_actual_time,
+f.flight_number_reporting_airline AS flight_number,
+f.distance,
+f.tail_number,
+f.report_airline AS airline,
+f.dep_delay_minutes AS dep_delay_min,
+f.cancelled,
+f.cancellation_code,
+w.t,
+w.max_gws,
+w.w_speed,
+f.air_time,
+'40' AS author
+FROM
+dds.kdz_40_flights f
+LEFT JOIN LATERAL (
+SELECT *
+FROM dds.kdz_40_airport_weather w
+WHERE
+f.flight_dep_scheduled_ts >= w.date_start
+AND f.flight_dep_scheduled_ts < w.date_end
+ORDER BY w.date_start DESC
+LIMIT 1
+) w ON true
+WHERE
+w.date_end::date != '3000-01-01'
+AND f.flight_dep_scheduled_ts > (SELECT MAX(loaded_ts) FROM etl.kdz_40_pre_mart_flights_loaded);
+
+insert into mart.fact_departure
+(airport_origin_dk, 
+airport_destination_dk, 
+weather_type_dk, 
+flight_scheduled_ts, 
+flight_actual_time, 
+flight_number, 
+distance, 
+tail_number, 
+airline, 
+dep_delay_min, 
+cancelled, 
+cancellation_code, 
+t, 
+max_gws, 
+w_speed, 
+air_time, 
+author, 
+loaded_ts) 
+select
+airport_origin_dk, 
+airport_destination_dk, 
+weather_type_dk, 
+flight_scheduled_ts, 
+flight_actual_time, 
+flight_number, 
+distance, 
+tail_number, 
+airline, 
+dep_delay_min, 
+cancelled, 
+cancellation_code, 
+t, 
+max_gws, 
+w_speed, 
+air_time, 
+author, 
+now() as loaded_ts
+from
+etl.kdz_40_pre_mart_flights
+on conflict(airport_origin_dk, airport_destination_dk, flight_scheduled_ts, flight_number) do update
+set
+weather_type_dk = excluded.weather_type_dk, 
+flight_actual_time = excluded.flight_actual_time, 
+distance = excluded.distance, 
+tail_number = excluded.tail_number, 
+airline = excluded.airline, 
+dep_delay_min = excluded.dep_delay_min, 
+cancelled = excluded.cancelled, 
+cancellation_code = excluded.cancellation_code, 
+t = excluded.t, 
+max_gws = excluded.max_gws, 
+w_speed = excluded.w_speed, 
+air_time = excluded.air_time, 
+author = excluded.author, 
+loaded_ts = excluded.loaded_ts;
+
+
+update etl.kdz_40_pre_mart_flights_loaded
+set loaded_ts = (select max(flight_scheduled_ts) from mart.fact_departure
+where author = '40');
